@@ -1,6 +1,6 @@
 # Implementation plan: Quilr AI Field Developer assessment
 
-Spec: `Instruction.md` (repo root). This plan is the argument; the spec wins on conflict.
+Spec: the assessment brief (not included in this repo). This plan is the argument; the brief wins on conflict.
 
 ## Context and architecture decisions
 
