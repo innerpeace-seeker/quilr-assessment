@@ -1,0 +1,21 @@
+[project]
+name = "quilr-assessment"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.162.0",
+    "httpx>=0.28.1",
+    "mcp>=1.20",
+    "pydantic>=2.14.2",
+    "pyjwt>=2.15.1",
+    "regex>=2026.9.29",
+    "starlette>=1.10.0",
+    "uvicorn>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "anyio>=4.16.0",
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.4.1.post1",
+]
