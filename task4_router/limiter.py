@@ -67,7 +67,21 @@ class TokenLimiter:
             raise ValueError("tokens must be >= 0")
         self._calls += 1
         sweep = self._calls % SWEEP_EVERY == 0
-        return await asyncio.to_thread(self._reserve, tenant_key(api_key), tokens, sweep)
+        fut = asyncio.ensure_future(asyncio.to_thread(self._reserve, tenant_key(api_key), tokens, sweep))
+        try:
+            return await asyncio.shield(fut)
+        except asyncio.CancelledError:
+            # the worker thread can't be stopped and may still commit (e.g. it was waiting
+            # on the write lock); nobody will settle that row, so drop it when it lands
+            fut.add_done_callback(self._undo)
+            raise
+
+    def _undo(self, fut):
+        if fut.cancelled() or fut.exception() is not None:
+            return
+        res = fut.result()
+        if isinstance(res, Reservation):
+            asyncio.get_running_loop().run_in_executor(None, self._exec, "DELETE FROM usage WHERE id = ?", (res.id,))
 
     def _reserve(self, tenant, tokens, sweep):
         now = self.clock()

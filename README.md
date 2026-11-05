@@ -106,7 +106,9 @@ Some details that took care:
   starts further left. The randomized test caught this leaking the start of an email, so
   the hold point is found by its own leftmost scan.
 - Card numbers are Luhn-checked, so order numbers and other long digit runs pass through
-  untouched.
+  untouched. The card regex is greedy, so `4242 4242 4242 4242 078-05-1120` first matches
+  as 19 digits and fails Luhn. Shorter spans that end at a group boundary are tried next,
+  so both the card and the SSN still get caught.
 - The chunk after each delta is rewritten in place, with one redactor per `choices[i]`.
   When `finish_reason` arrives, whatever is held is flushed into that chunk.
 
@@ -116,8 +118,9 @@ the provider blocks mid-stream and the client must already have the first text. 
 is roughly 120k chunks/s on my machine, far more than any model's token rate.
 
 Limitations: only `delta.content` is scanned, not tool-call arguments. Regexes will miss
-PII written out in words ("four one one one ..."). If a single run of email-ish characters
-goes past the 256-char cap, it is flushed as-is.
+PII written out in words ("four one one one ..."). Past the 256-char cap everything except the last 40
+characters is released, so a card or SSN still being typed (at most 37 characters) is never
+split. A single email-like run longer than that could still get through.
 
 ## Task 4: rate limiting + failover
 
@@ -134,9 +137,15 @@ curl -s localhost:9200/v1/chat/completions -H 'Authorization: Bearer tenant-1' \
 `(tenant, ts, tokens)`. The tenant is the sha256 of the API key, never the raw key. A
 tenant's usage is the sum of its rows from the last 60 s.
 
-- Each request reserves `prompt_chars/4 + max_tokens` up front and is settled to the
-  provider's real `usage.total_tokens` afterwards. If the request fails, or the client goes
-  away, the reservation is released.
+- Each request reserves `prompt_chars/4 + max_tokens` up front (1024 if the client didn't
+  set `max_tokens`) and is settled to the provider's real `usage.total_tokens` afterwards.
+  If the request fails or the handler is cancelled, the reservation is released. That
+  includes a cancel that lands while `reserve()` is still waiting on sqlite's write lock:
+  the worker thread can't be stopped, so its row is deleted when it commits. A client that
+  just disconnects doesn't cancel the handler under uvicorn: the upstream call finishes
+  and is billed, which is correct because the tokens really were spent.
+- The client's JSON goes upstream as sent, with only `model` replaced. Pydantic is only
+  used to validate it and estimate the token cost.
 - Delete-expired, sum, compare and insert all run in one `BEGIN IMMEDIATE` transaction.
   Concurrent requests, even from several processes sharing the file, therefore can't both
   squeeze under the limit. A test fires 20 concurrent 5k reservations and exactly 10 get

@@ -121,3 +121,19 @@ async def test_persists_across_restart(tmp_path, clock):
 async def test_negative_tokens_rejected(lim):
     with pytest.raises(ValueError):
         await lim.reserve("k1", -5)
+
+
+async def test_cancel_while_waiting_for_lock_does_not_leak(tmp_path):
+    # to_thread can't stop the worker: if it commits after we were cancelled, undo it
+    lim = TokenLimiter(tmp_path / "rl.db", limit=50_000, window_s=60)
+    blocker = sqlite3.connect(tmp_path / "rl.db", isolation_level=None)
+    blocker.execute("BEGIN IMMEDIATE")
+    t = asyncio.create_task(lim.reserve("k1", 5_000))
+    await asyncio.sleep(0.2)
+    t.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await t
+    blocker.execute("COMMIT")
+    blocker.close()
+    await asyncio.sleep(1.0)  # let the worker thread commit and the undo run
+    assert await lim.usage("k1") == 0

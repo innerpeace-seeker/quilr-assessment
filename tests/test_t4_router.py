@@ -227,3 +227,17 @@ async def test_auth_checked_before_body(make):
     r = await c.post("/v1/chat/completions", json={})
     assert r.status_code == 401
     assert_clean_error(r, "authentication_error")
+
+
+async def test_client_body_forwarded_as_sent(make, mocks):
+    c, _ = make()
+    body = {"messages": [
+        {"role": "user", "content": [{"type": "text", "text": "what's the weather"}]},
+        {"role": "assistant", "content": None,
+         "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "wx", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "call_1", "content": "sunny"},
+    ], "temperature": 0.2}
+    r = await chat(c, body)
+    assert r.status_code == 200
+    sent = mocks[0].state.last_body
+    assert sent == {**body, "model": "big-model"}  # no injected max_tokens/stream, nothing dropped

@@ -25,17 +25,23 @@ from .router import ModelRouter, Provider
 log = logging.getLogger("task4.app")
 
 
+DEFAULT_COMPLETION_ESTIMATE = 1024
+
+
+# These models only validate and size the request. What goes upstream is the client's
+# own JSON (with `model` swapped), so tool_calls, content parts etc. survive untouched.
 class Message(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     role: str
-    content: str
+    content: str | list[dict] | None = None
 
 
 class ChatRequest(BaseModel):
-    # unknown fields (temperature, top_p, ...) are passed through to the provider
     model_config = ConfigDict(extra="allow")
 
     messages: list[Message] = Field(min_length=1)
-    max_tokens: int = Field(default=1024, ge=1, le=32_000)
+    max_tokens: int | None = Field(default=None, ge=1, le=32_000)
     stream: bool = False
 
     @field_validator("stream")
@@ -49,8 +55,14 @@ class ChatRequest(BaseModel):
 def estimate_tokens(req: ChatRequest) -> int:
     # ~4 chars per token plus a little per-message overhead; reconciled with the real
     # count from the provider afterwards, so this only has to be in the right ballpark
-    prompt = sum(len(m.content) // 4 + 4 for m in req.messages)
-    return prompt + req.max_tokens
+    chars = 0
+    for m in req.messages:
+        if isinstance(m.content, str):
+            chars += len(m.content)
+        elif m.content:
+            chars += sum(len(str(part.get("text", ""))) for part in m.content)
+    prompt = chars // 4 + 4 * len(req.messages)
+    return prompt + (req.max_tokens or DEFAULT_COMPLETION_ESTIMATE)
 
 
 def _tenant(request: Request) -> str:
@@ -103,7 +115,7 @@ def create_app(router: ModelRouter, limiter: TokenLimiter, on_shutdown=None) -> 
                               request.state.request_id)
 
     @app.post("/v1/chat/completions")
-    async def chat(body: ChatRequest, tenant: str = Depends(_tenant)):
+    async def chat(body: ChatRequest, request: Request, tenant: str = Depends(_tenant)):
         estimate = estimate_tokens(body)
 
         res = await limiter.reserve(tenant, estimate)
@@ -116,10 +128,10 @@ def create_app(router: ModelRouter, limiter: TokenLimiter, on_shutdown=None) -> 
                                {"Retry-After": str(max(1, math.ceil(res.retry_after_s)))})
 
         try:
-            provider, data = await router.complete(body.model_dump(exclude_none=True))
+            provider, data = await router.complete(await request.json())
         except BaseException:
-            # includes cancellation (client went away): the tokens were never used.
-            # shield so a second cancel can't skip the cleanup.
+            # includes cancellation (e.g. server shutting down mid-call): nothing was
+            # used, give the tokens back. shield so a second cancel can't skip it.
             await asyncio.shield(limiter.release(res.id))
             raise
 
