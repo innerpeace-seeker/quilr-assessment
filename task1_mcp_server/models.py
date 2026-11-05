@@ -2,7 +2,8 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError, field_validator
 
-CustomerId = Annotated[str, StringConstraints(pattern=r"^CUST-\d{5}$")]
+# [0-9], not \d: pydantic's regex engine treats \d as Unicode and lets fullwidth digits in
+CustomerId = Annotated[str, StringConstraints(pattern=r"^CUST-[0-9]{5}$")]
 
 
 class _Args(BaseModel):
