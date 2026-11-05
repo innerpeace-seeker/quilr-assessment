@@ -115,7 +115,8 @@ def test_random_chunking_matches_one_shot():
     import random
     rng = random.Random(1234)
     parts = [EMAIL, SSN, CARD, "4111-1111-1111-1111", "1234567812345678", "555-1234", "a@b.co",
-             "hello", "world.", "x.y@z.org.", "  ", "\n", "123", "-", "45", "6789", "tel:", ","]
+             "hello", "world.", "x.y@z.org.", "  ", "\n", "123", "-", "45", "6789", "tel:", ",",
+             "4242 4242 4242 4242", "078-05-1120", "12/26", "Visa-", "SSN-", "1"]
     for _ in range(300):
         text = " ".join(rng.choice(parts) for _ in range(rng.randint(1, 12)))
         if rng.random() < 0.3:
@@ -123,3 +124,31 @@ def test_random_chunking_matches_one_shot():
         cuts = sorted(rng.sample(range(1, len(text)), k=min(len(text) - 1, rng.randint(0, 8)))) if len(text) > 1 else []
         pieces = [text[a:b] for a, b in zip([0] + cuts, cuts + [len(text)])]
         assert "".join(run(pieces)) == redact_text(text), (text, pieces)
+
+
+# --- from final review ---
+
+@pytest.mark.parametrize("text,expected", [
+    ("card 4242 4242 4242 4242 078-05-1120 ok", f"card {R} {R} ok"),
+    ("4242424242424242 078-05-1120", f"{R} {R}"),
+    ("card 4242 4242 4242 4242 12/26", f"card {R} 12/26"),
+    ("pay 1 4242 4242 4242 4242 now", f"pay 1 {R} now"),
+    ("Visa-4242424242424242", f"Visa-{R}"),
+    ("SSN-078-05-1120", f"SSN-{R}"),
+])
+def test_card_next_to_other_numbers(text, expected):
+    assert redact_text(text) == expected
+
+
+def test_cap_never_releases_part_of_a_card():
+    r = StreamRedactor()
+    out = r.feed("x" * 250 + "4242 4242") + r.feed(" 4242 4242 done") + r.flush()
+    assert "4242" not in out
+    assert out.endswith(f"{R} done")
+
+
+def test_cap_still_bounds_memory_with_digits():
+    r = StreamRedactor(max_hold=64)
+    for _ in range(500):
+        r.feed("1 2 3 4 5 6 7 8 9 ")
+        assert r.pending <= 64

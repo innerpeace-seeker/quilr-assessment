@@ -12,14 +12,18 @@ import regex
 MASK = "[REDACTED]"
 
 _EMAIL = r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}"
-_SSN = r"(?<![\d-])\d{3}-\d{2}-\d{4}(?![\d-])"
+# "(?<!\d)(?<!\d-)": not glued to another number, but "SSN-078-05-1120" is fine
+_SSN = r"(?<!\d)(?<!\d-)\d{3}-\d{2}-\d{4}(?!\d)(?!-\d)"
 # 13-19 digits, optionally grouped with single spaces or dashes. Luhn is checked afterwards.
-_CARD = r"(?<![\d-])\d(?:[ -]?\d){12,18}(?!\d)"
+_CARD = r"(?<!\d)(?<!\d-)\d(?:[ -]?\d){12,18}(?!\d)"
 
 PII = regex.compile(rf"(?P<email>{_EMAIL})|(?P<ssn>{_SSN})|(?P<card>{_CARD})")
 
 # enough left context for the lookbehinds above
 _CTX = 8
+# what stays held when the cap forces a release; longer than any card (19 digits +
+# 18 separators) or SSN, so the forced cut can't land inside one still being typed
+_KEEP = 40
 
 
 def luhn_ok(s: str) -> bool:
@@ -32,6 +36,38 @@ def luhn_ok(s: str) -> bool:
                 d -= 9
         total += d
     return total % 10 == 0
+
+
+def _card_length(s: str) -> int:
+    """Length of the longest Luhn-valid prefix of a card candidate, 0 if none.
+
+    The regex is greedy, so "4242 4242 4242 4242 078-05-1120" comes in as 19 digits.
+    Prefixes are only cut where a digit group ends.
+    """
+    ends, digits = [], 0
+    for i, c in enumerate(s):
+        if c.isdigit():
+            digits += 1
+            if 13 <= digits and (i + 1 == len(s) or not s[i + 1].isdigit()):
+                ends.append(i + 1)
+    for end in reversed(ends):
+        if luhn_ok(s[:end]):
+            return end
+    return 0
+
+
+def pii_spans(text: str, pos: int = 0):
+    while (m := PII.search(text, pos)) is not None:
+        if m.lastgroup != "card":
+            yield m.start(), m.end()
+            pos = m.end()
+            continue
+        n = _card_length(m.group())
+        if n:
+            yield m.start(), m.start() + n
+            pos = m.start() + n
+        else:
+            pos = m.start() + 1  # something shorter may still start inside, e.g. an SSN
 
 
 class StreamRedactor:
@@ -48,9 +84,7 @@ class StreamRedactor:
         if not text:
             return ""
         self._buf += text
-        # final=True when the tail grows past the cap: memory stays bounded, at the
-        # cost of possibly missing a single absurdly long "email"
-        return self._drain(final=len(self._buf) > self.max_hold)
+        return self._drain(final=False)
 
     def flush(self) -> str:
         return self._drain(final=True)
@@ -68,21 +102,31 @@ class StreamRedactor:
     def _drain(self, final: bool) -> str:
         text = self._ctx + self._buf
         start = len(self._ctx)
-        hold = len(text) if final else self._hold_point(text, start)
+        # past the cap, release all but the last _KEEP chars no matter what: memory stays
+        # bounded, at the cost of maybe missing one absurdly long run of email-ish text
+        forced = not final and len(self._buf) > self.max_hold
+        if final:
+            hold = len(text)
+        elif forced:
+            hold = max(start, len(text) - _KEEP)
+        else:
+            hold = self._hold_point(text, start)
         out = []
         pos = start
 
-        for m in PII.finditer(text, pos=start):
-            if m.start() >= hold:
+        for s, e in pii_spans(text, start):
+            if s >= hold:
                 break
-            if m.end() > hold:
-                hold = m.start()
+            if e > hold:
+                if forced:
+                    # a complete match across the forced cut: mask all of it
+                    out += [text[pos:s], MASK]
+                    pos = hold = e
+                else:
+                    hold = s
                 break
-            if m.lastgroup == "card" and not luhn_ok(m.group()):
-                continue
-            out.append(text[pos:m.start()])
-            out.append(MASK)
-            pos = m.end()
+            out += [text[pos:s], MASK]
+            pos = e
 
         out.append(text[pos:hold])
         self._ctx = text[max(0, hold - _CTX):hold]
