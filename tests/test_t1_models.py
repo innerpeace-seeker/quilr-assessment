@@ -16,6 +16,7 @@ def test_valid_customer_id():
 @pytest.mark.parametrize("bad", [
     "cust-12345", "CUST-1234", "CUST-123456", "CUST-12A45", " CUST-12345",
     "CUST-12345\n", "CUST_12345", "", 12345, None, ["CUST-12345"],
+    "CUST-٠٠٠٤٢", "CUST-０００４２",  # Arabic-Indic, fullwidth
 ])
 def test_bad_customer_ids(bad):
     with pytest.raises(ValidationError):
