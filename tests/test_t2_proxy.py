@@ -185,3 +185,12 @@ async def test_clean_batch_forwards_original_bytes(env):
     r = await post(c, raw, VIEWER)
     assert len(r.json()) == 2
     assert calls[0]["body"] == raw
+
+
+async def test_duplicate_tool_name_never_reaches_downstream(env):
+    c, calls = env
+    raw = b'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"admin_reset_key","name":"get_status"}}'
+    r = await post(c, raw, VIEWER)
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == -32600
+    assert calls == []

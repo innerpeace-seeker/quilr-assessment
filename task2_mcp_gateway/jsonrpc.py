@@ -41,9 +41,27 @@ def _check_shape(msg):
         raise RpcInvalidRequest("no method")
 
 
+class _DuplicateKey(Exception):
+    pass
+
+
+def _no_dupes(pairs):
+    obj = {}
+    for k, v in pairs:
+        if k in obj:
+            raise _DuplicateKey(k)
+        obj[k] = v
+    return obj
+
+
 def parse_body(raw: bytes):
+    # We forward the original bytes, so the policy check and the downstream must see
+    # the same object. With duplicate keys they might not: json.loads keeps the last
+    # one, other parsers keep the first. Not worth the ambiguity, reject.
     try:
-        body = json.loads(raw)
+        body = json.loads(raw, object_pairs_hook=_no_dupes)
+    except _DuplicateKey:
+        raise RpcInvalidRequest("duplicate key") from None
     except (ValueError, UnicodeDecodeError):
         raise RpcParseError() from None
     if isinstance(body, list):

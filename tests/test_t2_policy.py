@@ -107,3 +107,13 @@ def test_tools_call_without_usable_name(params):
     if params is not None:
         msg["params"] = params
     assert check_message(msg, "admin")["error"]["code"] == -32602
+
+
+@pytest.mark.parametrize("raw", [
+    b'{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"admin_reset_key","name":"get_status"}}',
+    b'{"jsonrpc":"2.0","id":1,"method":"tools/list","method":"tools/call"}',
+])
+def test_duplicate_keys_rejected(raw):
+    # json.loads keeps the last duplicate; a downstream that keeps the first would run something else
+    with pytest.raises(RpcInvalidRequest):
+        parse_body(raw)
