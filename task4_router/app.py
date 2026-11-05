@@ -12,7 +12,7 @@ import uuid
 from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -103,8 +103,7 @@ def create_app(router: ModelRouter, limiter: TokenLimiter, on_shutdown=None) -> 
                               request.state.request_id)
 
     @app.post("/v1/chat/completions")
-    async def chat(body: ChatRequest, request: Request):
-        tenant = _tenant(request)
+    async def chat(body: ChatRequest, tenant: str = Depends(_tenant)):
         estimate = estimate_tokens(body)
 
         res = await limiter.reserve(tenant, estimate)

@@ -86,8 +86,8 @@ class Gateway:
             return _err(400, "invalid_request", "Request body must be a JSON object")
 
         streaming = bool(body.get("stream"))
-        req = self.client.build_request("POST", self.url, json=body,
-                                        headers={"Authorization": f"Bearer {self.api_key}"})
+        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        req = self.client.build_request("POST", self.url, json=body, headers=headers)
         try:
             resp = await self.client.send(req, stream=True)
         except httpx.HTTPError as e:

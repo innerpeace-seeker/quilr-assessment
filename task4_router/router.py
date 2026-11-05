@@ -23,6 +23,10 @@ class Provider:
     def url(self):
         return self.base_url.rstrip("/") + "/v1/chat/completions"
 
+    def headers(self):
+        # local / self-hosted models often run without a key
+        return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+
 
 class _Failover(Exception):
     """Primary didn't work out in a way the secondary might fix."""
@@ -59,7 +63,7 @@ class ModelRouter:
             # httpx's own timeouts are per socket operation, so a provider that drips
             # a byte every second would never trip them.
             async with asyncio.timeout(timeout):
-                resp = await p.client.post(p.url, json=body, headers={"Authorization": f"Bearer {p.api_key}"})
+                resp = await p.client.post(p.url, json=body, headers=p.headers())
         except TimeoutError:
             raise _Failover("timeout") from None
         except httpx.HTTPError as e:

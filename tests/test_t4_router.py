@@ -211,3 +211,19 @@ async def test_unexpected_exception_is_sanitized(make, monkeypatch):
     assert_clean_error(r, "internal_error")
     assert "psycopg2" not in r.text and "10.0.0.5" not in r.text
     assert await lim.usage("tenant-key-1") == 0
+
+
+async def test_provider_without_api_key(tmp_path, mocks):
+    p_app, s_app = mocks
+    async with asgi_client(p_app) as pc, asgi_client(s_app) as sc:
+        r = ModelRouter(Provider("primary", "http://p", "", "m", pc), Provider("secondary", "http://s", "", "m", sc))
+        name, _ = await r.complete({"messages": [{"role": "user", "content": "x"}]})
+    assert name == "primary"
+    assert p_app.state.last_auth is None
+
+
+async def test_auth_checked_before_body(make):
+    c, _ = make()
+    r = await c.post("/v1/chat/completions", json={})
+    assert r.status_code == 401
+    assert_clean_error(r, "authentication_error")

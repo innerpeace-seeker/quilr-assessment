@@ -144,3 +144,14 @@ def test_tail_lands_on_finish_chunk_with_empty_delta():
     assert out["choices"][0]["delta"] == {"content": "done."}
     out = rewrite_chunk({"choices": [{"index": 1, "delta": None, "finish_reason": "stop"}]}, rs)
     assert out["choices"][0]["finish_reason"] == "stop"
+
+
+async def test_no_upstream_key_sends_no_auth_header():
+    mock = create_mock()
+    upstream = httpx.AsyncClient(transport=httpx.ASGITransport(app=mock), base_url="http://p")
+    gw = create_app("http://p", "", client=upstream)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=gw), base_url="http://gw") as c:
+        r = await c.post("/v1/chat/completions", json={"model": "mock-pii", "messages": []})
+    await upstream.aclose()
+    assert r.status_code == 200
+    assert mock.state.last_auth is None
